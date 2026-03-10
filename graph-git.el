@@ -305,30 +305,33 @@ the lane of the parent node itself."
     (font-lock-ensure)
     (buffer-substring (point-min) (point-max))))
 
-(defun graph-git--commit-details (hash)
-  "Return plist with :subject :body :author :date :files for HASH.
+(defun graph-git--commit-details (dir hash)
+  "Return plist with :subject :body :author :date :files for HASH in DIR.
 
 :files is a list of plists (:path :add :del :diff), where :diff is
 the full patch for that file."
   (let* (;; Full message, then split into subject + body
          (full-msg (string-trim
-                    (shell-command-to-string
-                     (format "git show -s --format=%%B %s" hash))))
+                    (graph-git--call-raw dir
+                                         "show" "-s"
+                                         "--format=%B" hash)))
          (msg-lines (string-lines full-msg t))
          (subject (or (car msg-lines) ""))
          (body    (string-join (or (cdr msg-lines) '()) "\n"))
 
          ;; Author + date on separate lines
          (meta (string-trim
-                (shell-command-to-string
-                 (format "git show -s --format=%%an%%n%%ad %s" hash))))
+                (graph-git--call-raw dir
+                                     "show" "-s"
+                                     "--format=%an%n%ad" hash)))
          (meta-lines (string-lines meta t))
          (author (or (nth 0 meta-lines) ""))
          (date   (or (nth 1 meta-lines) ""))
 
          ;; Per-file stats (additions / deletions)
-         (numstat-raw (shell-command-to-string
-                       (format "git show --numstat --format=\"\" %s" hash)))
+         (numstat-raw (graph-git--call-raw dir
+                                           "show" "--numstat"
+                                           "--format=" hash))
          (stats (make-hash-table :test #'equal)))
 
     ;; Parse numstat output into hash table: path -> (add . del)
@@ -345,8 +348,9 @@ the full patch for that file."
                    stats))))
 
     ;; Full patch, split per file by `diff --git` blocks
-    (let* ((patch-raw (shell-command-to-string
-                       (format "git show --patch --format=\"\" %s" hash)))
+    (let* ((patch-raw (graph-git--call-raw dir
+                                           "show" "--patch"
+                                           "--format=" hash))
            (start (string-match "^diff --git " patch-raw))
            (patch-part (if start (substring patch-raw start) ""))
            (chunks (unless (string-empty-p patch-part)
@@ -381,6 +385,8 @@ the full patch for that file."
 (defun graph-git--update-info-panel (commit)
   "Given COMMIT plist, update the info panel."
   (let ((buf (get-buffer graph-git-info-buffer-name))
+        (dir (and graph-git--session
+                  (graph-git-session-dir graph-git--session)))
         (refs (graph-git--commit-refs commit
                                       (and graph-git--session
                                            (graph-git-session-ref-table
@@ -388,7 +394,7 @@ the full patch for that file."
     (when (and buf commit)
       (with-current-buffer buf
         (let* ((hash    (plist-get commit :hash))
-               (details (graph-git--commit-details hash))
+               (details (graph-git--commit-details dir hash))
                (subject (plist-get details :subject))
                (body    (plist-get details :body))
                (author  (plist-get details :author))
@@ -538,6 +544,15 @@ Tries `vc-root-dir' first, then looks up .git."
     (let ((default-directory dir))
       (apply #'process-file "git" nil t nil args))
     (string-trim (buffer-string))))
+
+(defun graph-git--call-raw (dir &rest args)
+  "Run git with ARGS in DIR and return raw stdout as a string."
+  (unless dir
+    (error "graph-git--call-raw: DIR is nil"))
+  (with-temp-buffer
+    (let ((default-directory dir))
+      (apply #'process-file "git" nil t nil args))
+    (buffer-string)))
 
 ;;; Ref table: commit hash -> list of refs
 
