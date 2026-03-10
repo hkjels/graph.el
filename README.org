@@ -206,3 +206,6 @@ o
 
 History is loaded asynchronously and fetches more commits as you move near the
 end of the buffer.
+
+#+attr_html: :width 600px
+[[./readme-git-screenshot.png]]
